@@ -143,20 +143,36 @@ echo "Created security group: $SG_ID"
 
 
 # Clean up AMIs and associated resources
-After deleting your stack, clean up the AMIs to avoid ongoing storage costs. Below are some helpful commands:
-``` bash
-# Replace "tutorial-name"
-TUTORIAL_NAME="tutorial-name"
-# Get AMI IDs
-aws ec2 describe-images --owners self --filters "Name=name,Values=*${TUTORIAL_NAME}*" --query 'Images[*].[ImageId,Name,CreationDate]' --output table
-# Get snapshot IDs (replace ami-id)
-aws ec2 describe-images --image-ids <ami-id> --query 'Images[0].BlockDeviceMappings[*].Ebs.SnapshotId' --output text
-# Deregister ami
-aws ec2 deregister-image --image-id <ami-id>
-# Delete snapshot
-aws ec2 delete-snapshot --snapshot-id <snapshot_id>
-# Delete SSM parameter
-aws ssm delete-parameter --name "/hpcic-tutorials/amis/${TUTORIAL_NAME}-tutorial"
-```
+After deleting the stack, deregister unused AMIs to avoid snapshot storage costs.
+Use the first command to review matching AMIs and their snapshots. The loop collects each AMI's snapshots, deregisters the AMI, and deletes those snapshots. AWS reports an error if a snapshot cannot be deleted, such as when another registered AMI still uses it.
 
+``` bash
+# Set the tutorial image-name prefix.
+TUTORIAL_NAME="tutorial-name"
+
+# Review the AMIs and snapshots that match this tutorial.
+aws ec2 describe-images --owners self --filters "Name=name,Values=*${TUTORIAL_NAME}*" --query 'Images[*].[ImageId,Name,CreationDate]' --output table
+
+aws ec2 describe-images --owners self --filters "Name=name,Values=*${TUTORIAL_NAME}*" --query 'Images[*].[ImageId,Name,BlockDeviceMappings[*].Ebs.SnapshotId]' --output json
+
+# Deregister all matching AMIs and delete their unshared snapshots.
+# `--output text` separates IDs with tabs, so convert each tab to a line before reading IDs.
+aws ec2 describe-images --owners self --filters "Name=name,Values=*${TUTORIAL_NAME}*" --query 'Images[].ImageId' --output text | tr '\t' '\n' | while IFS= read -r IMAGE_ID; do
+  [ -z "$IMAGE_ID" ] && continue
+  SNAPSHOT_IDS=$(aws ec2 describe-images --image-ids "$IMAGE_ID" --query 'Images[0].BlockDeviceMappings[?Ebs.SnapshotId].Ebs.SnapshotId' --output text | tr '\t' '\n')
+  echo "Deregistering AMI: $IMAGE_ID"
+  if aws ec2 deregister-image --image-id "$IMAGE_ID"; then
+    while IFS= read -r SNAPSHOT_ID; do
+      [ -z "$SNAPSHOT_ID" ] && continue
+      echo "Deleting snapshot: $SNAPSHOT_ID"
+      aws ec2 delete-snapshot --snapshot-id "$SNAPSHOT_ID"
+    done <<< "$SNAPSHOT_IDS"
+  else
+    echo "Failed to deregister AMI: $IMAGE_ID; its snapshots were not deleted." >&2
+  fi
+done
+
+# Remove the SSM parameter after deleting the AMIs it references.
+echo "Deleting SSM parameter: /hpcic-tutorials/amis/${TUTORIAL_NAME}-tutorial"
+aws ssm delete-parameter --name "/hpcic-tutorials/amis/${TUTORIAL_NAME}-tutorial"
 ```
