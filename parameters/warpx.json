@@ -17,7 +17,7 @@
   },
   {
     "ParameterKey": "TutorialQueryString",
-    "ParameterValue": "/lab"
+    "ParameterValue": "/lab/tree/files/llnl-hpc-2026"
   },
   {
     "ParameterKey": "TaskTimeoutHours",
